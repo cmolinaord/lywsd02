@@ -13,10 +13,10 @@ UUID_UNITS = 'EBE0CCBE-7A0A-4B0C-8A1A-6FF2997DA3A6'  # 0x00 - F, 0x01 - C    REA
 UUID_HISTORY = 'EBE0CCBC-7A0A-4B0C-8A1A-6FF2997DA3A6'  # Last idx 152          READ NOTIFY
 UUID_TIME = 'EBE0CCB7-7A0A-4B0C-8A1A-6FF2997DA3A6'  # 5 or 4 bytes          READ WRITE
 UUID_DATA = 'EBE0CCC1-7A0A-4B0C-8A1A-6FF2997DA3A6'  # 3 bytes               READ NOTIFY
-UUID_BATTERY = 'EBE0CCC4-7A0A-4B0C-8A1A-6FF2997DA3A6'
+UUID_BATTERY = 'EBE0CCC4-7A0A-4B0C-8A1A-6FF2997DA3A6'      # 1 byte                READ
 
 
-class SensorData(collections.namedtuple('SensorDataBase', ['temperature', 'humidity'])):
+class SensorData(collections.namedtuple('SensorDataBase', ['temperature', 'humidity', 'battery'])):
     __slots__ = ()
 
 
@@ -30,13 +30,13 @@ class Lywsd02Client:
         'F': b'\x01',
     }
 
-    def __init__(self, mac, notification_timeout=5.0):
+    def __init__(self, mac, notification_timeout=15.0):
         self._mac = mac
         self._peripheral = btle.Peripheral()
         self._notification_timeout = notification_timeout
         self._handles = {}
         self._tz_offset = None
-        self._data = SensorData(None, None)
+        self._data = SensorData(None, None, None)
         self._history_data = collections.OrderedDict()
         self._context_depth = 0
 
@@ -86,10 +86,7 @@ class Lywsd02Client:
 
     @property
     def battery(self):
-        with self.connect():
-            ch = self._peripheral.getCharacteristics(uuid=UUID_BATTERY)[0]
-            value = ch.read()
-        return ord(value)
+        return self.data.battery
 
     @property
     def time(self):
@@ -160,10 +157,13 @@ class Lywsd02Client:
         desc.write(0x01.to_bytes(2, byteorder="little"), withResponse=True)
 
     def _process_sensor_data(self, data):
-        temperature, humidity = struct.unpack_from('hB', data)
+        temperature, humidity, voltage = struct.unpack_from('<hBh', data)
         temperature /= 100
+        voltage /= 1000
 
-        self._data = SensorData(temperature=temperature, humidity=humidity)
+        battery = max(min(round((voltage - 2.1),2) * 100, 100),0) # 3.1 or above --> 100% 2.1 --> 0 %
+
+        self._data = SensorData(temperature=temperature, humidity=humidity, battery=battery)
 
     def _process_history_data(self, data):
         (idx, ts, max_temp, max_hum, min_temp, min_hum) = struct.unpack_from('<IIhBhB', data)
